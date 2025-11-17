@@ -5,7 +5,7 @@ import service.*;
 import util.Constants;
 import util.AuthUtil;
 import exceptions.UserAlreadyExistsException;
-// import exceptions.InvalidHoursException; // This was already correctly removed
+// import exceptions.InvalidHoursException; // Already removed
 import exceptions.SlotUnavailableException;
 
 import java.util.Arrays;
@@ -18,25 +18,31 @@ public class ParkingLotCLI {
     private AuthService auth;
     private Scanner scanner;
     private boolean running;
-    // private BillingService billing; // <-- REMOVED
+    // private BillingService billing; // Already removed
 
-    public ParkingLotCLI(ParkingSystem system, AuthService auth) { // <-- REMOVED from params
+    public ParkingLotCLI(ParkingSystem system, AuthService auth) { // Already removed
         this.system = system;
         this.auth = auth;
         this.scanner = new Scanner(System.in);
         this.running = true;
-        // this.billing = billing; // <-- REMOVED
     }
 
     public static void main(String[] args) {
+        File recordFile = new File("record.txt");
         try {
-            new File("record.txt").createNewFile();
+            recordFile.createNewFile();
         } catch (Exception e) {
             System.out.println("Error creating record.txt: " + e.getMessage());
         }
 
-        AuthService auth = new AuthService("record.txt");
-        ParkingLot lot = new ParkingLot(2, 8); // 2 floors, 8 spots each
+        // Define lot size
+        int numFloors = 2;
+        int spotsPerFloor = 8;
+        int totalSpots = numFloors * spotsPerFloor;
+        
+        // Pass totalSpots to AuthService constructor
+        AuthService auth = new AuthService(recordFile.getPath(), totalSpots);
+        ParkingLot lot = new ParkingLot(numFloors, spotsPerFloor); 
         
         // Floor 1: 5 Car Spots, 3 Bike Spots
         for (int i = 1; i <= 5; i++) lot.addSpotToFloor(1, new ParkingSpot("A" + i, Constants.VEHICLE_CAR));
@@ -44,32 +50,39 @@ public class ParkingLotCLI {
         // Floor 2: 5 Car Spots, 3 Bike Spots
         for (int i = 1; i <= 5; i++) lot.addSpotToFloor(2, new ParkingSpot("B" + i, Constants.VEHICLE_CAR));
         for (int i = 6; i <= 8; i++) lot.addSpotToFloor(2, new ParkingSpot("B" + i, Constants.VEHICLE_MOTORCYCLE));
-        System.out.println("Parking lot initialized with Car and Bike spots.");
+        System.out.println("Parking lot initialized with " + totalSpots + " total spots.");
 
         // Billing: Car=20/hr, Bike=10/hr, Min=10
         BillingService billing = new BillingService(20.0, 10.0, 10.0);
         ParkingSystem system = new ParkingSystem(lot, auth, billing);
 
-        // Load Demo Users
-        try {
-            Admin admin = new Admin("admin", AuthUtil.hash("admin123"), "Admin User", "admin@park.com");
-            admin.setSystem(system); // Link admin to system for reports
-            auth.registerUser(admin);
-            
-            auth.registerUser(new Attendant("att1", AuthUtil.hash("att123"), "Attendant One", "att@park.com"));
-            Customer john = new Customer("john", AuthUtil.hash("john123"), "John Doe", "john@email.com", 150.0);
-            john.addVehicle("JH-01-9999"); // Add a vehicle for John
-            auth.registerUser(john);
-            System.out.println("Demo users loaded (admin/admin123, att1/att123, john/john123)");
-        } catch (UserAlreadyExistsException e) {
-            System.out.println("Demo users already exist.");
+        // Load Demo Users only if the record file is empty
+        boolean fileIsEmpty = !recordFile.exists() || recordFile.length() == 0;
+        
+        if (fileIsEmpty) {
+            System.out.println("No users found. Loading demo users...");
+            try {
+                Admin admin = new Admin("admin", AuthUtil.hash("admin123"), "Admin User", "admin@park.com");
+                admin.setSystem(system); // Link admin to system for reports
+                auth.registerUser(admin);
+                
+                auth.registerUser(new Attendant("att1", AuthUtil.hash("att123"), "Attendant One", "att@park.com"));
+                
+                Customer john = new Customer("john", AuthUtil.hash("john123"), "John Doe", "john@email.com", 150.0);
+                auth.registerUser(john); // This will write John to the file
+                
+                System.out.println("Demo users loaded (admin/admin123, att1/att123, john/john123)");
+            } catch (UserAlreadyExistsException e) {
+                System.out.println("Error loading demo users: " + e.getMessage());
+            }
+        } else {
+            System.out.println("Registered users loaded from record.txt.");
         }
         
-        ParkingLotCLI cli = new ParkingLotCLI(system, auth); // <-- REMOVED from args
+        ParkingLotCLI cli = new ParkingLotCLI(system, auth); 
         cli.run();
     }
 
-    // ... (rest of the file is unchanged) ...
     public void run() {
         System.out.println("Welcome to SmartParking CLI (Timer-Based Billing)");
         while (running) {
@@ -96,7 +109,7 @@ public class ParkingLotCLI {
         System.out.println("1. Register (Customer)");
         System.out.println("2. Login");
         System.out.println("3. Show Live Slot Status");
-        System.out.println("4. Show users currently inside (record.txt)");
+        System.out.println("4. Show users currently inside (In-Memory)");
         System.out.println("0. Exit");
         System.out.print("Choice: ");
     }
@@ -112,15 +125,20 @@ public class ParkingLotCLI {
             System.out.print("Enter email: ");
             String email = scanner.nextLine().trim();
             String hashed = AuthUtil.hash(pass);
-            Customer c = new Customer(username, hashed, name, email, 100.0);
             
-            // Ask to add one vehicle on registration
-            System.out.print("Enter your primary vehicle license plate (e.g., MH-01-1234): ");
-            String plate = scanner.nextLine().trim();
-            c.addVehicle(plate);
-
-            auth.registerUser(c);
-            System.out.println("Registered successfully. Demo balance: ₹100");
+            // Give a default balance for new customers
+            double initialBalance = 100.0;
+            Customer c = new Customer(username, hashed, name, email, initialBalance);
+            
+            if (auth.registerUser(c)) { // This now writes to file
+                System.out.println("Registered successfully. Demo balance: ₹" + initialBalance);
+                System.out.print("Enter your primary vehicle license plate (e.g., MH-01-1234): ");
+                String plate = scanner.nextLine().trim();
+                c.addVehicle(plate); // Note: This vehicle is only in memory for this session
+            } else {
+                System.out.println("Registration failed (see server log).");
+            }
+            
         } catch (UserAlreadyExistsException e) {
             System.out.println("Registration failed: " + e.getMessage());
         }
@@ -131,15 +149,38 @@ public class ParkingLotCLI {
         String username = scanner.nextLine().trim();
         System.out.print("Password: ");
         String pass = scanner.nextLine().trim();
-        User u = auth.login(username, pass);
+        
+        // This is now a slow operation
+        User u = auth.login(username, pass); 
+        
         if (u == null) {
             System.out.println("Login failed.");
             return;
         }
         System.out.println("Welcome " + u.getName() + " (" + u.getRole() + ")");
+        
+        // IMPORTANT: If user is Customer, we must load their vehicles manually
+        // as they are not stored in the file.
+        if (u instanceof Customer) {
+            loadCustomerVehicles((Customer) u);
+        }
+        
         if (u instanceof Customer) handleCustomer((Customer) u);
         else if (u instanceof Admin) handleAdmin((Admin) u);
         else if (u instanceof Attendant) handleAttendant((Attendant) u);
+    }
+    
+    /**
+     * Helper method to re-add vehicles to a Customer object on login,
+     * since they are not persistent in this model.
+     * This is a workaround for the design.
+     */
+    private void loadCustomerVehicles(Customer c) {
+        // In a real system, you'd read this from a 'vehicles.txt' file.
+        // For this demo, we'll just check if their demo vehicle is present.
+        if (c.getUsername().equals("john") && c.getVehiclePlates().length == 0) {
+            c.addVehicle("JH-01-9999");
+        }
     }
 
     // --- Customer Menu (Req #2, #4, #5) ---
@@ -243,6 +284,7 @@ public class ParkingLotCLI {
                             System.out.println("Customer not found.");
                             break;
                         }
+                        loadCustomerVehicles(c); // Helper for vehicles
                         handleEntry(c); // Reuse the customer entry flow
                         break;
                     case "2":
@@ -253,6 +295,7 @@ public class ParkingLotCLI {
                             System.out.println("Customer not found.");
                             break;
                         }
+                        // No need to load vehicles for exit
                         handleExit(cExit); // Reuse the customer exit flow
                         break;
                     case "3":
@@ -289,7 +332,7 @@ public class ParkingLotCLI {
                 break;
             }
         }
-        if (!exists) c.addVehicle(plate);
+        if (!exists) c.addVehicle(plate); // Note: This is only in memory
         
         if (type.equals(Constants.VEHICLE_CAR)) return new Car(plate, c.getUsername());
         else return new Motorcycle(plate, c.getUsername());
@@ -367,6 +410,9 @@ public class ParkingLotCLI {
             double amt = Double.parseDouble(scanner.nextLine().trim());
             c.getAccount().deposit(amt);
             System.out.println("Deposit successful. New balance: ₹" + c.getAccount().getBalance());
+            // This change is NOT persistent. It will be lost on logout.
+            // A fully persistent system would need to rewrite the user's line in record.txt
+            System.out.println("Note: This balance change is temporary and will reset on logout.");
         } catch (NumberFormatException e) {
             System.out.println("Invalid amount.");
         }
@@ -379,8 +425,8 @@ public class ParkingLotCLI {
     }
 
     private void showCurrentUsersInside() {
-        String[] users = auth.readCurrentUsers();
-        System.out.println("Users currently inside (record.txt):");
+        String[] users = auth.readCurrentUsers(); // Now reads from in-memory array
+        System.out.println("Users currently inside (In-Memory):");
         if (users.length == 0) System.out.println("(none)");
         for (String u : users) System.out.println("- " + u);
     }
